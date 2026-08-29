@@ -1,0 +1,420 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.component.rest;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.camel.CamelContext;
+import org.apache.camel.Consumer;
+import org.apache.camel.Endpoint;
+import org.apache.camel.Exchange;
+import org.apache.camel.Producer;
+import org.apache.camel.Route;
+import org.apache.camel.RuntimeCamelException;
+import org.apache.camel.Service;
+import org.apache.camel.ServiceStatus;
+import org.apache.camel.StatefulService;
+import org.apache.camel.spi.CamelEvent;
+import org.apache.camel.spi.CamelEvent.ExchangeCreatedEvent;
+import org.apache.camel.spi.NormalizedEndpointUri;
+import org.apache.camel.spi.RestConfiguration;
+import org.apache.camel.spi.RestRegistry;
+import org.apache.camel.support.EventNotifierSupport;
+import org.apache.camel.support.LifecycleStrategySupport;
+import org.apache.camel.util.ObjectHelper;
+
+public class DefaultRestRegistry extends EventNotifierSupport implements RestRegistry {
+
+    private final Map<Consumer, List<RestService>> registry = new LinkedHashMap<>();
+    private final Map<Consumer, List<RestService>> specs = new LinkedHashMap<>();
+    private final Map<String, List<RestServiceEntry>> routeIdIndex = new HashMap<>();
+    private transient Producer apiProducer;
+
+    @Override
+    public void addRestService(
+            Consumer consumer, boolean contractFirst, String url, String baseUrl, String basePath, String uriTemplate,
+            String method,
+            String consumes, String produces, String inType, String outType, String routeId, String operationId,
+            String specificationUri, String description) {
+        RestServiceEntry entry = new RestServiceEntry(
+                consumer, false, contractFirst, url, baseUrl, basePath, uriTemplate, method, consumes, produces, inType,
+                outType, routeId, operationId, specificationUri, description);
+        List<RestService> list = registry.computeIfAbsent(consumer, c -> new ArrayList<>());
+        list.add(entry);
+        if (routeId != null) {
+            routeIdIndex.computeIfAbsent(routeId, k -> new ArrayList<>()).add(entry);
+        }
+    }
+
+    @Override
+    public void addRestSpecification(
+            Consumer consumer, boolean contractFirst, String url, String baseUrl, String basePath, String method,
+            String produces, String description) {
+        RestServiceEntry entry = new RestServiceEntry(
+                consumer, true, contractFirst, url, baseUrl, basePath, null, method, null, produces, null, null, null,
+                null, null, description);
+        List<RestService> list = specs.computeIfAbsent(consumer, c -> new ArrayList<>());
+        list.add(entry);
+    }
+
+    @Override
+    public void hit(String method, String basePath, String path) {
+        for (var list : registry.values()) {
+            for (var rs : list) {
+                RestServiceEntry entry = (RestServiceEntry) rs;
+                if (entry.method.equalsIgnoreCase(method) && matchesPath(entry, basePath, path)) {
+                    entry.hits.incrementAndGet();
+                    return;
+                }
+            }
+        }
+    }
+
+    private static boolean matchesPath(RestServiceEntry entry, String basePath, String path) {
+        if (entry.basePath != null && entry.basePath.equals(basePath)) {
+            if (path != null && path.equals(entry.uriTemplate)) {
+                return true;
+            }
+            // contract-first stores the OpenAPI path in baseUrl with uriTemplate=null
+            if (entry.uriTemplate == null && path != null && path.equals(entry.baseUrl)) {
+                return true;
+            }
+            String entryPath = entry.basePath + (entry.uriTemplate != null ? entry.uriTemplate : "");
+            return path != null && path.equals(entryPath);
+        }
+        String entryPath = entry.basePath != null ? entry.basePath : "";
+        if (entry.uriTemplate != null) {
+            entryPath += entry.uriTemplate;
+        }
+        return path != null && path.equals(entryPath);
+    }
+
+    @Override
+    public void removeRestService(Consumer consumer) {
+        List<RestService> removed = registry.remove(consumer);
+        if (removed != null) {
+            for (RestService rs : removed) {
+                RestServiceEntry entry = (RestServiceEntry) rs;
+                if (entry.routeId != null) {
+                    List<RestServiceEntry> entries = routeIdIndex.get(entry.routeId);
+                    if (entries != null) {
+                        entries.remove(entry);
+                        if (entries.isEmpty()) {
+                            routeIdIndex.remove(entry.routeId);
+                        }
+                    }
+                }
+            }
+        }
+        specs.remove(consumer);
+    }
+
+    @Override
+    public List<RestRegistry.RestService> listAllRestServices() {
+        List<RestRegistry.RestService> answer = new ArrayList<>();
+        for (var list : registry.values()) {
+            answer.addAll(list);
+        }
+        return answer;
+    }
+
+    @Override
+    public List<RestService> listAllRestSpecifications() {
+        List<RestRegistry.RestService> answer = new ArrayList<>();
+        for (var list : specs.values()) {
+            answer.addAll(list);
+        }
+        return answer;
+    }
+
+    @Override
+    public int size() {
+        int count = 0;
+        for (var list : registry.values()) {
+            count += list.size();
+        }
+        return count;
+    }
+
+    @Override
+    public String apiDocAsJson() {
+        // see if there is a rest-api endpoint which would be the case if rest api-doc has been explicit enabled
+        CamelContext camelContext = getCamelContext();
+        if (apiProducer == null) {
+            Endpoint restApiEndpoint = null;
+            Endpoint restEndpoint = null;
+            for (Map.Entry<NormalizedEndpointUri, Endpoint> entry : camelContext.getEndpointRegistry().entrySet()) {
+                String uri = entry.getKey().getUri();
+                if (uri.startsWith("rest-api:")) {
+                    restApiEndpoint = entry.getValue();
+                    break;
+                } else if (restEndpoint == null && uri.startsWith("rest:")) {
+                    restEndpoint = entry.getValue();
+                }
+            }
+
+            if (restApiEndpoint == null && restEndpoint != null) {
+                // no rest-api has been explicit enabled, then we need to create it first
+                RestEndpoint rest = (RestEndpoint) restEndpoint;
+                String componentName = rest.getProducerComponentName();
+
+                if (componentName != null) {
+                    RestConfiguration config = camelContext.getRestConfiguration();
+
+                    String apiComponent = config.getApiComponent() != null
+                            ? config.getApiComponent() : RestApiEndpoint.DEFAULT_API_COMPONENT_NAME;
+                    String path = config.getApiContextPath() != null ? config.getApiContextPath() : "api-doc";
+                    String uri = String.format(
+                            "rest-api:%s/%s?componentName=%s&apiComponentName=%s",
+                            path, camelContext.getName(), componentName, apiComponent);
+
+                    restApiEndpoint = camelContext.getEndpoint(uri);
+                }
+            }
+
+            if (restApiEndpoint != null) {
+                // reuse the producer to avoid creating it
+                try {
+                    apiProducer = restApiEndpoint.createProducer();
+                    camelContext.addService(apiProducer, true);
+                } catch (Exception e) {
+                    throw RuntimeCamelException.wrapRuntimeCamelException(e);
+                }
+            }
+        }
+
+        if (apiProducer != null) {
+            try {
+                Exchange dummy = apiProducer.getEndpoint().createExchange();
+                apiProducer.process(dummy);
+
+                return dummy.getMessage().getBody(String.class);
+            } catch (Exception e) {
+                throw RuntimeCamelException.wrapRuntimeCamelException(e);
+            }
+        }
+
+        return null;
+    }
+
+    @Override
+    public void notify(CamelEvent event) throws Exception {
+        if (event instanceof ExchangeCreatedEvent ece) {
+            String routeId = ece.getExchange().getFromRouteId();
+            if (routeId != null) {
+                List<RestServiceEntry> entries = routeIdIndex.get(routeId);
+                if (entries != null) {
+                    for (RestServiceEntry entry : entries) {
+                        if (!entry.contractFirst) {
+                            entry.hits.incrementAndGet();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public boolean isEnabled(CamelEvent event) {
+        return event instanceof ExchangeCreatedEvent;
+    }
+
+    @Override
+    protected void doStart() throws Exception {
+        ObjectHelper.notNull(getCamelContext(), "camelContext", this);
+        // add a lifecycle so we can keep track when consumers is being removed, so we can unregister them from our registry
+        getCamelContext().addLifecycleStrategy(new RemoveRestServiceLifecycleStrategy());
+        // register as event notifier so we receive ExchangeCreatedEvent for code-first hit tracking
+        getCamelContext().getManagementStrategy().addEventNotifier(this);
+    }
+
+    @Override
+    protected void doStop() throws Exception {
+        getCamelContext().getManagementStrategy().removeEventNotifier(this);
+        registry.clear();
+        specs.clear();
+        routeIdIndex.clear();
+    }
+
+    /**
+     * Represents a rest service
+     */
+    private static final class RestServiceEntry implements RestService {
+
+        private final Consumer consumer;
+        private final boolean specification;
+        private final boolean contractFirst;
+        private final String url;
+        private final String baseUrl;
+        private final String basePath;
+        private final String uriTemplate;
+        private final String method;
+        private final String consumes;
+        private final String produces;
+        private final String inType;
+        private final String outType;
+        private final String routeId;
+        private final String operationId;
+        private final String specificationUri;
+        private final String description;
+        private final AtomicLong hits = new AtomicLong();
+
+        private RestServiceEntry(Consumer consumer, boolean specification, boolean contractFirst, String url, String baseUrl,
+                                 String basePath,
+                                 String uriTemplate, String method, String consumes, String produces,
+                                 String inType, String outType, String routeId, String operationId,
+                                 String specificationUri, String description) {
+            this.consumer = consumer;
+            this.specification = specification;
+            this.contractFirst = contractFirst;
+            this.url = url;
+            this.baseUrl = baseUrl;
+            this.basePath = basePath;
+            this.uriTemplate = uriTemplate;
+            this.method = method;
+            this.consumes = consumes;
+            this.produces = produces;
+            this.inType = inType;
+            this.outType = outType;
+            this.routeId = routeId;
+            this.operationId = operationId;
+            this.specificationUri = specificationUri;
+            this.description = description;
+        }
+
+        @Override
+        public Consumer getConsumer() {
+            return consumer;
+        }
+
+        @Override
+        public boolean isSpecification() {
+            return specification;
+        }
+
+        @Override
+        public boolean isContractFirst() {
+            return contractFirst;
+        }
+
+        @Override
+        public String getUrl() {
+            return url;
+        }
+
+        @Override
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        @Override
+        public String getBasePath() {
+            return basePath;
+        }
+
+        @Override
+        public String getUriTemplate() {
+            return uriTemplate;
+        }
+
+        @Override
+        public String getMethod() {
+            return method;
+        }
+
+        @Override
+        public String getConsumes() {
+            return consumes;
+        }
+
+        @Override
+        public String getProduces() {
+            return produces;
+        }
+
+        @Override
+        public String getInType() {
+            return inType;
+        }
+
+        @Override
+        public String getOutType() {
+            return outType;
+        }
+
+        @Override
+        public String getState() {
+            // must use String type to be sure remote JMX can read the attribute without requiring Camel classes.
+            ServiceStatus status = null;
+            if (consumer instanceof StatefulService statefulService) {
+                status = statefulService.getStatus();
+            }
+            // if no status exists then its stopped
+            if (status == null) {
+                status = ServiceStatus.Stopped;
+            }
+            return status.name();
+        }
+
+        @Override
+        public String getRouteId() {
+            return routeId;
+        }
+
+        @Override
+        public String getOperationId() {
+            return operationId;
+        }
+
+        @Override
+        public String getSpecificationUri() {
+            return specificationUri;
+        }
+
+        @Override
+        public String getDescription() {
+            return description;
+        }
+
+        @Override
+        public long getHits() {
+            return hits.get();
+        }
+    }
+
+    /**
+     * A {@link org.apache.camel.spi.LifecycleStrategy} that keeps track when a {@link Consumer} is removed and
+     * automatic un-register it from this REST registry.
+     */
+    private final class RemoveRestServiceLifecycleStrategy extends LifecycleStrategySupport {
+
+        @Override
+        public void onServiceRemove(CamelContext context, Service service, Route route) {
+            super.onServiceRemove(context, service, route);
+
+            // if its a consumer then de-register it from the rest registry
+            if (service instanceof Consumer consumer) {
+                removeRestService(consumer);
+            }
+        }
+    }
+}

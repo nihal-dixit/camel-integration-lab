@@ -1,0 +1,134 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.component.openai;
+
+import java.util.Map;
+
+import com.openai.core.ClientOptions;
+import org.apache.camel.Endpoint;
+import org.apache.camel.SSLContextParametersAware;
+import org.apache.camel.spi.Metadata;
+import org.apache.camel.spi.annotations.Component;
+import org.apache.camel.support.DefaultComponent;
+
+/**
+ * OpenAI component for chat completion, embeddings, and audio transcription.
+ */
+@Component("openai")
+public class OpenAIComponent extends DefaultComponent implements SSLContextParametersAware {
+
+    @Metadata(description = "Default API key for all endpoints", security = "secret")
+    private String apiKey;
+
+    @Metadata(description = "Default base URL for all endpoints", defaultValue = ClientOptions.PRODUCTION_URL)
+    private String baseUrl = ClientOptions.PRODUCTION_URL;
+
+    @Metadata(description = "Default model for chat completion endpoints")
+    private String model;
+
+    @Metadata(description = "Default model for embeddings endpoints")
+    private String embeddingModel;
+
+    @Metadata(description = "Default model for audio transcription endpoints")
+    private String audioModel;
+
+    @Metadata(label = "security", defaultValue = "false",
+              description = "Enable usage of global SSL context parameters")
+    private boolean useGlobalSslContextParameters;
+
+    @Override
+    protected Endpoint createEndpoint(String uri, String remaining, Map<String, Object> parameters) throws Exception {
+        OpenAIConfiguration configuration = new OpenAIConfiguration();
+
+        if (apiKey != null) {
+            configuration.setApiKey(apiKey);
+        }
+        if (baseUrl != null) {
+            configuration.setBaseUrl(baseUrl);
+        }
+        if (model != null) {
+            configuration.setModel(model);
+        }
+        if (embeddingModel != null) {
+            configuration.setEmbeddingModel(embeddingModel);
+        }
+        if (audioModel != null) {
+            configuration.setAudioModel(audioModel);
+        }
+
+        OpenAIEndpoint endpoint = new OpenAIEndpoint(uri, this, configuration);
+        // set the operation from the URI path (e.g., chat-completion)
+        endpoint.setOperation(OpenAIOperations.fromValue(remaining));
+        setProperties(endpoint, parameters);
+
+        if (configuration.getSslContextParameters() == null) {
+            configuration.setSslContextParameters(retrieveGlobalSslContextParameters());
+        }
+
+        return endpoint;
+    }
+
+    public String getApiKey() {
+        return apiKey;
+    }
+
+    public void setApiKey(String apiKey) {
+        this.apiKey = apiKey;
+    }
+
+    public String getBaseUrl() {
+        return baseUrl;
+    }
+
+    public void setBaseUrl(String baseUrl) {
+        this.baseUrl = baseUrl;
+    }
+
+    public String getModel() {
+        return model;
+    }
+
+    public void setModel(String model) {
+        this.model = model;
+    }
+
+    public String getEmbeddingModel() {
+        return embeddingModel;
+    }
+
+    public void setEmbeddingModel(String embeddingModel) {
+        this.embeddingModel = embeddingModel;
+    }
+
+    public String getAudioModel() {
+        return audioModel;
+    }
+
+    public void setAudioModel(String audioModel) {
+        this.audioModel = audioModel;
+    }
+
+    @Override
+    public boolean isUseGlobalSslContextParameters() {
+        return useGlobalSslContextParameters;
+    }
+
+    @Override
+    public void setUseGlobalSslContextParameters(boolean useGlobalSslContextParameters) {
+        this.useGlobalSslContextParameters = useGlobalSslContextParameters;
+    }
+}

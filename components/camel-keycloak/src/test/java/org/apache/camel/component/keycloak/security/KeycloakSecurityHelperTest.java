@@ -1,0 +1,539 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.component.keycloak.security;
+
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.PublicKey;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.junit.jupiter.api.Test;
+import org.keycloak.common.VerificationException;
+import org.keycloak.jose.jws.JWSBuilder;
+import org.keycloak.representations.AccessToken;
+import org.mockito.Mockito;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.when;
+
+public class KeycloakSecurityHelperTest {
+
+    @Test
+    void testExtractRoles() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+        AccessToken.Access realmAccess = Mockito.mock(AccessToken.Access.class);
+        AccessToken.Access clientAccess = Mockito.mock(AccessToken.Access.class);
+
+        when(token.getRealmAccess()).thenReturn(realmAccess);
+        when(realmAccess.getRoles()).thenReturn(Set.of("realm-admin", "user"));
+
+        when(token.getResourceAccess()).thenReturn(Map.of("test-client", clientAccess));
+        when(clientAccess.getRoles()).thenReturn(Set.of("client-admin"));
+
+        Set<String> roles = KeycloakSecurityHelper.extractRoles(token, "test-realm", "test-client");
+
+        assertEquals(3, roles.size());
+        assertTrue(roles.contains("realm-admin"));
+        assertTrue(roles.contains("user"));
+        assertTrue(roles.contains("client-admin"));
+    }
+
+    @Test
+    void testExtractUsername() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+        when(token.getPreferredUsername()).thenReturn("testuser");
+
+        String username = KeycloakSecurityHelper.extractUsername(token);
+        assertEquals("testuser", username);
+    }
+
+    @Test
+    void testExtractUsernameFallback() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+        when(token.getPreferredUsername()).thenReturn(null);
+        when(token.getName()).thenReturn("Test User");
+
+        String username = KeycloakSecurityHelper.extractUsername(token);
+        assertEquals("Test User", username);
+    }
+
+    @Test
+    void testExtractUsernameSubjectFallback() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+        when(token.getPreferredUsername()).thenReturn(null);
+        when(token.getName()).thenReturn(null);
+        when(token.getSubject()).thenReturn("subject-123");
+
+        String username = KeycloakSecurityHelper.extractUsername(token);
+        assertEquals("subject-123", username);
+    }
+
+    @Test
+    void testExtractEmail() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+        when(token.getEmail()).thenReturn("test@example.com");
+
+        String email = KeycloakSecurityHelper.extractEmail(token);
+        assertEquals("test@example.com", email);
+    }
+
+    @Test
+    void testIsTokenExpired() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+
+        // Test with future expiry
+        long futureTime = (System.currentTimeMillis() / 1000) + 3600; // 1 hour from now
+        when(token.getExp()).thenReturn(futureTime);
+        assertFalse(KeycloakSecurityHelper.isTokenExpired(token));
+
+        // Test with past expiry
+        long pastTime = (System.currentTimeMillis() / 1000) - 3600; // 1 hour ago
+        when(token.getExp()).thenReturn(pastTime);
+        assertTrue(KeycloakSecurityHelper.isTokenExpired(token));
+
+        // Test with no expiry
+        when(token.getExp()).thenReturn(null);
+        assertFalse(KeycloakSecurityHelper.isTokenExpired(token));
+    }
+
+    @Test
+    void testIsTokenActive() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+
+        // Test active token
+        long futureTime = (System.currentTimeMillis() / 1000) + 3600; // 1 hour from now
+        when(token.getExp()).thenReturn(futureTime);
+        when(token.getNbf()).thenReturn(null);
+        assertTrue(KeycloakSecurityHelper.isTokenActive(token));
+
+        // Test expired token
+        long pastTime = (System.currentTimeMillis() / 1000) - 3600; // 1 hour ago
+        when(token.getExp()).thenReturn(pastTime);
+        assertFalse(KeycloakSecurityHelper.isTokenActive(token));
+
+        // Test token not yet valid
+        long futureNbf = (System.currentTimeMillis() / 1000) + 3600; // 1 hour from now
+        when(token.getExp()).thenReturn(futureTime);
+        when(token.getNbf()).thenReturn(futureNbf);
+        assertFalse(KeycloakSecurityHelper.isTokenActive(token));
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenWithInvalidToken() throws Exception {
+        // Test that verification fails with invalid token
+        String invalidToken = "invalid.jwt.token";
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+        PublicKey publicKey = keyPair.getPublic();
+
+        assertThrows(VerificationException.class, () -> {
+            KeycloakSecurityHelper.parseAndVerifyAccessToken(invalidToken, publicKey, expectedIssuer);
+        });
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenWithNullKey() {
+        String invalidToken = "invalid.jwt.token";
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        // Should throw exception with null key
+        assertThrows(VerificationException.class, () -> {
+            KeycloakSecurityHelper.parseAndVerifyAccessToken(invalidToken, null, expectedIssuer);
+        });
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenWithNullIssuer() throws Exception {
+        String invalidToken = "invalid.jwt.token";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+        PublicKey publicKey = keyPair.getPublic();
+
+        // Should throw exception with null issuer
+        assertThrows(VerificationException.class, () -> {
+            KeycloakSecurityHelper.parseAndVerifyAccessToken(invalidToken, publicKey, null);
+        });
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenRejectsExpiredToken() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 - 3600);
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        assertThrows(VerificationException.class,
+                () -> KeycloakSecurityHelper.parseAndVerifyAccessToken(signed, keyPair.getPublic(), expectedIssuer));
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenAcceptsValidToken() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        AccessToken verified
+                = KeycloakSecurityHelper.parseAndVerifyAccessToken(signed, keyPair.getPublic(), expectedIssuer);
+        assertEquals("user-123", verified.getSubject());
+        assertEquals(expectedIssuer, verified.getIssuer());
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenAcceptsMatchingTokenType() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        token.type("Bearer");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        AccessToken verified = KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                signed, keyPair.getPublic(), expectedIssuer, null, List.of("Bearer"), null);
+        assertEquals("user-123", verified.getSubject());
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenRejectsWrongTokenType() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        // An ID token presented where an access token (typ=Bearer) is expected.
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        token.type("ID");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        assertThrows(VerificationException.class,
+                () -> KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                        signed, keyPair.getPublic(), expectedIssuer, null, List.of("Bearer"), null));
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenAcceptsMatchingAuthorizedParty() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        token.issuedFor("my-client");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        AccessToken verified = KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                signed, keyPair.getPublic(), expectedIssuer, null, null, "my-client");
+        assertEquals("user-123", verified.getSubject());
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenRejectsWrongAuthorizedParty() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        token.issuedFor("other-client");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        assertThrows(VerificationException.class,
+                () -> KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                        signed, keyPair.getPublic(), expectedIssuer, null, null, "my-client"));
+    }
+
+    @Test
+    void testExtractKeyIdReturnsKidFromHeader() throws Exception {
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.subject("user-123");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .kid("test-key-id")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        assertEquals("test-key-id", KeycloakSecurityHelper.extractKeyId(signed));
+    }
+
+    @Test
+    void testExtractKeyIdReturnsNullForMalformedToken() {
+        assertNull(KeycloakSecurityHelper.extractKeyId("not-a-jwt"));
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenAcceptsMatchingAudience() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        token.audience("my-client");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        AccessToken verified = KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                signed, keyPair.getPublic(), expectedIssuer, List.of("my-client"));
+        assertEquals("user-123", verified.getSubject());
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenAcceptsTokenWithAllExpectedAudiences() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        token.audience("my-client", "my-other-client");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        AccessToken verified = KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                signed, keyPair.getPublic(), expectedIssuer, List.of("my-client", "my-other-client"));
+        assertEquals("user-123", verified.getSubject());
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenRejectsTokenMissingOneOfMultipleExpectedAudiences() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        // Token only has one of the two expected audiences
+        token.audience("my-client");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        assertThrows(VerificationException.class,
+                () -> KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                        signed, keyPair.getPublic(), expectedIssuer, List.of("my-client", "my-other-client")));
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenRejectsMissingAudience() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        // No audience set on the token
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        assertThrows(VerificationException.class,
+                () -> KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                        signed, keyPair.getPublic(), expectedIssuer, List.of("my-client")));
+    }
+
+    @Test
+    void testParseAndVerifyAccessTokenRejectsNonMatchingAudience() throws Exception {
+        String expectedIssuer = "http://localhost:8080/realms/test";
+
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        AccessToken token = new AccessToken();
+        token.issuer(expectedIssuer);
+        token.subject("user-123");
+        token.exp(System.currentTimeMillis() / 1000 + 3600);
+        token.audience("some-other-client");
+
+        String signed = new JWSBuilder()
+                .type("JWT")
+                .jsonContent(token)
+                .rsa256(keyPair.getPrivate());
+
+        assertThrows(VerificationException.class,
+                () -> KeycloakSecurityHelper.parseAndVerifyAccessToken(
+                        signed, keyPair.getPublic(), expectedIssuer, List.of("my-client")));
+    }
+
+    @Test
+    void testExtractPermissions() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+
+        // Mock authorization (simple approach without specific permission structure)
+        AccessToken.Authorization authorization = Mockito.mock(AccessToken.Authorization.class);
+        when(token.getAuthorization()).thenReturn(authorization);
+
+        // Test permissions extraction from custom claims
+        Map<String, Object> otherClaims = new HashMap<>();
+        otherClaims.put("permissions", Arrays.asList("read:documents", "write:documents", "admin:users"));
+
+        when(token.getOtherClaims()).thenReturn(otherClaims);
+
+        Set<String> permissions = KeycloakSecurityHelper.extractPermissions(token);
+
+        assertEquals(3, permissions.size());
+        assertTrue(permissions.contains("read:documents"));
+        assertTrue(permissions.contains("write:documents"));
+        assertTrue(permissions.contains("admin:users"));
+    }
+
+    @Test
+    void testExtractPermissionsFromCustomClaims() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+
+        // Mock other claims with permissions
+        Map<String, Object> otherClaims = new HashMap<>();
+        otherClaims.put("permissions", Arrays.asList("read:files", "write:files", "delete:files"));
+
+        when(token.getOtherClaims()).thenReturn(otherClaims);
+        when(token.getAuthorization()).thenReturn(null);
+
+        Set<String> permissions = KeycloakSecurityHelper.extractPermissions(token);
+
+        assertEquals(3, permissions.size());
+        assertTrue(permissions.contains("read:files"));
+        assertTrue(permissions.contains("write:files"));
+        assertTrue(permissions.contains("delete:files"));
+    }
+
+    @Test
+    void testExtractPermissionsFromScopes() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+
+        // Mock other claims with scope-based permissions
+        Map<String, Object> otherClaims = new HashMap<>();
+        otherClaims.put("scope", "read write admin");
+
+        when(token.getOtherClaims()).thenReturn(otherClaims);
+        when(token.getAuthorization()).thenReturn(null);
+
+        Set<String> permissions = KeycloakSecurityHelper.extractPermissions(token);
+
+        assertEquals(3, permissions.size());
+        assertTrue(permissions.contains("read"));
+        assertTrue(permissions.contains("write"));
+        assertTrue(permissions.contains("admin"));
+    }
+
+    @Test
+    void testExtractPermissionsEmpty() {
+        AccessToken token = Mockito.mock(AccessToken.class);
+        when(token.getAuthorization()).thenReturn(null);
+        when(token.getOtherClaims()).thenReturn(Map.of());
+
+        Set<String> permissions = KeycloakSecurityHelper.extractPermissions(token);
+
+        assertTrue(permissions.isEmpty());
+    }
+
+}

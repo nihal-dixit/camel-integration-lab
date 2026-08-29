@@ -1,0 +1,59 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: "Incremental Test Runner"
+description: "Test only affected projects, using file-path analysis and POM dependency detection"
+inputs:
+  pr-id:
+    description: 'Id of the pull request (optional for push builds)'
+    required: false
+    default: ''
+  github-token:
+    description: 'The github token to access to the API'
+    required: false
+  skip-mvnd-install:
+    description: 'Flag indicating whether the installation of mvnd should be skipped'
+    required: false
+    default: 'false'
+  github-repo:
+    description: 'The GitHub repository name (example, apache/camel)'
+    required: false
+    default: ${{ github.repository }}
+  extra-modules:
+    description: 'Additional modules to test (comma-separated paths, e.g. from /component-test)'
+    required: false
+    default: ''
+  maven-extra-args:
+    description: 'Extra Maven arguments to pass to the build (e.g. -Denforcer.phase=none)'
+    required: false
+    default: ''
+runs:
+  using: "composite"
+  steps:
+    - id: install-mvnd
+      uses: apache/camel/.github/actions/install-mvnd@main
+      with:
+        dry-run: ${{ inputs.skip-mvnd-install }}
+    - name: maven test
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_ID: ${{ inputs.pr-id }}
+        GITHUB_REPO: ${{ inputs.github-repo }}
+        EXTRA_MODULES: ${{ inputs.extra-modules }}
+        MAVEN_EXTRA_ARGS: ${{ inputs.maven-extra-args }}
+      shell: bash
+      run: ${{ github.action_path }}/incremental-build.sh ${{ steps.install-mvnd.outputs.mvnd-dir }}/mvnd "$PR_ID" "$GITHUB_REPO" "$EXTRA_MODULES"

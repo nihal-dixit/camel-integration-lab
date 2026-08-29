@@ -1,0 +1,32 @@
+= Camel CLI Integration Tests
+
+== Overview
+
+This module is used to run integration tests for Camel CLI; CLI commands are executed in a containerized environment provided by link:../../../test-infra/camel-test-infra-cli[camel-test-infra-cli]
+
+== Run tests
+
+To run tests use the dedicated Maven profile `jbang-it-test` activated by the same property:
+
+[source,bash]
+----
+mvn verify -Djbang-it-test
+----
+
+== Run tests locally
+
+To run tests using a local Camel CLI process instead of a container, activate the `local-camel-cli-process` profile:
+
+[source,bash]
+----
+mvn verify -Djbang-it-test -Dcamel-cli.instance.type=local-camel-cli-process
+----
+
+Tests tagged with `container-only` will be automatically excluded when this profile is active.
+
+== Configuration
+
+Camel CLI infra configuration is defined in link:../../../test-infra/camel-test-infra-cli/README.adoc[README.adoc]
+
+- `jbang.it.assert.wait.timeout` : timeout in seconds for log assertions, default `60`
+

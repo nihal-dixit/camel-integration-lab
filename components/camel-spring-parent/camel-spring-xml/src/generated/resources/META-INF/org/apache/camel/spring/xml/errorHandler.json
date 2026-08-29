@@ -1,0 +1,41 @@
+{
+  "model": {
+    "kind": "model",
+    "name": "errorHandler",
+    "title": "Error Handler",
+    "description": "Error handler settings",
+    "deprecated": false,
+    "label": "spring,configuration,error",
+    "javaType": "org.apache.camel.spring.xml.SpringErrorHandlerDefinition",
+    "abstract": false,
+    "input": false,
+    "output": false
+  },
+  "properties": {
+    "id": { "index": 0, "kind": "attribute", "displayName": "Id", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false, "description": "The id of this node" },
+    "type": { "index": 1, "kind": "attribute", "displayName": "Type", "group": "common", "required": true, "type": "enum", "javaType": "org.apache.camel.spring.xml.SpringErrorHandlerType", "enum": [ "DeadLetterChannel", "DefaultErrorHandler", "NoErrorHandler", "TransactionErrorHandler" ], "deprecated": false, "autowired": false, "secret": false, "defaultValue": "DefaultErrorHandler" },
+    "deadLetterUri": { "index": 2, "kind": "attribute", "displayName": "Dead Letter Uri", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "deadLetterHandleNewException": { "index": 3, "kind": "attribute", "displayName": "Dead Letter Handle New Exception", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "level": { "index": 4, "kind": "attribute", "displayName": "Level", "group": "common", "required": false, "type": "enum", "javaType": "org.apache.camel.LoggingLevel", "enum": [ "DEBUG", "ERROR", "INFO", "OFF", "TRACE", "WARN" ], "deprecated": false, "autowired": false, "secret": false, "defaultValue": "ERROR" },
+    "rollbackLoggingLevel": { "index": 5, "kind": "attribute", "displayName": "Rollback Logging Level", "group": "common", "required": false, "type": "enum", "javaType": "org.apache.camel.LoggingLevel", "enum": [ "DEBUG", "ERROR", "INFO", "OFF", "TRACE", "WARN" ], "deprecated": false, "autowired": false, "secret": false, "defaultValue": "WARN" },
+    "logName": { "index": 6, "kind": "attribute", "displayName": "Log Name", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "useOriginalMessage": { "index": 7, "kind": "attribute", "displayName": "Use Original Message", "group": "common", "required": false, "type": "boolean", "javaType": "java.lang.Boolean", "deprecated": false, "autowired": false, "secret": false, "defaultValue": false },
+    "useOriginalBody": { "index": 8, "kind": "attribute", "displayName": "Use Original Body", "group": "common", "required": false, "type": "boolean", "javaType": "java.lang.Boolean", "deprecated": false, "autowired": false, "secret": false, "defaultValue": false },
+    "transactionTemplateRef": { "index": 9, "kind": "attribute", "displayName": "Transaction Template Ref", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "transactionManagerRef": { "index": 10, "kind": "attribute", "displayName": "Transaction Manager Ref", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "onRedeliveryRef": { "index": 11, "kind": "attribute", "displayName": "On Redelivery Ref", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "onExceptionOccurredRef": { "index": 12, "kind": "attribute", "displayName": "On Exception Occurred Ref", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "onPrepareFailureRef": { "index": 13, "kind": "attribute", "displayName": "On Prepare Failure Ref", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "retryWhileRef": { "index": 14, "kind": "attribute", "displayName": "Retry While Ref", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "redeliveryPolicyRef": { "index": 15, "kind": "attribute", "displayName": "Redelivery Policy Ref", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "executorServiceRef": { "index": 16, "kind": "attribute", "displayName": "Executor Service Ref", "group": "common", "required": false, "type": "string", "javaType": "java.lang.String", "deprecated": false, "autowired": false, "secret": false },
+    "redeliveryPolicy": { "index": 17, "kind": "element", "displayName": "Redelivery Policy", "group": "common", "required": false, "type": "object", "javaType": "org.apache.camel.spring.xml.CamelRedeliveryPolicyFactoryBean", "deprecated": false, "autowired": false, "secret": false }
+  },
+  "exchangeProperties": {
+    "CamelExceptionCaught": { "index": 0, "kind": "exchangeProperty", "displayName": "Exception Caught", "label": "producer", "required": false, "javaType": "java.lang.Exception", "deprecated": false, "autowired": false, "secret": false, "description": "Stores the caught exception due to a processing error of the current Exchange" },
+    "CamelFailureEndpoint": { "index": 1, "kind": "exchangeProperty", "displayName": "Failure Endpoint", "label": "producer", "required": false, "javaType": "String", "deprecated": false, "autowired": false, "secret": false, "description": "Endpoint URI where the Exchange failed during processing" },
+    "CamelFailureRouteId": { "index": 2, "kind": "exchangeProperty", "displayName": "Failure Route Id", "label": "producer", "required": false, "javaType": "String", "deprecated": false, "autowired": false, "secret": false, "description": "Route ID where the Exchange failed during processing" },
+    "CamelFailureNodeId": { "index": 3, "kind": "exchangeProperty", "displayName": "Failure Node Id", "label": "producer", "required": false, "javaType": "String", "deprecated": false, "autowired": false, "secret": false, "description": "Node ID where the Exchange failed during processing" },
+    "CamelFailureLocation": { "index": 4, "kind": "exchangeProperty", "displayName": "Failure Location", "label": "producer", "required": false, "javaType": "String", "deprecated": false, "autowired": false, "secret": false, "description": "Source code location where the Exchange failed during processing" }
+  }
+}

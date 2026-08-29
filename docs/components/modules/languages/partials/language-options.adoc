@@ -1,0 +1,16 @@
+:tablespec: width="100%",cols="2a,1m,1m,6a",options="header"
+:cellformats: 'util.boldLink(path[2], "language_option", value.group) \
+|util.valueAsString(value.defaultValue) \
+|util.pascalCase(value.type) \
+|util.description(value)'
+
+The {doctitle} language supports the following options which are listed below.
+
+
+[{tablespec}]
+|===
+| Name | Default | Java Type | Description
+|===
+
+jsonpathTable::example$json/{shortname}.json['nodes$.properties[?(@.kind=="attribute" && @.displayName!="Id")]',{cellformats},{requires}]
+

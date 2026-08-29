@@ -1,0 +1,177 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.telemetry;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.camel.CamelContext;
+import org.apache.camel.CamelContextAware;
+import org.apache.camel.RoutesBuilder;
+import org.apache.camel.builder.RouteBuilder;
+import org.apache.camel.component.mock.MockEndpoint;
+import org.apache.camel.telemetry.mock.MockSpanAdapter;
+import org.apache.camel.telemetry.mock.MockTrace;
+import org.apache.camel.telemetry.mock.MockTracer;
+import org.apache.camel.test.junit6.ExchangeTestSupport;
+import org.junit.jupiter.api.Test;
+
+import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+/*
+ * WiretappedRouteTest tests the execution of a new spin off component which would create a new exchange, for example,
+ * using the wiretap component.
+ */
+class AsyncWiretapTest extends ExchangeTestSupport {
+
+    private static final int MESSAGE_COUNT = 10;
+    private static final int SPAN_COUNT = 7;
+    private static final long TIMEOUT_SECONDS = 30;
+
+    MockTracer mockTracer;
+
+    @Override
+    protected CamelContext createCamelContext() throws Exception {
+        CamelContext context = super.createCamelContext();
+        this.mockTracer = new MockTracer();
+        this.mockTracer.setDisableCoreProcessors(true);
+        CamelContextAware.trySetCamelContext(mockTracer, context);
+        mockTracer.init(context);
+        return context;
+    }
+
+    @Test
+    void testRouteMultipleRequests() throws Exception {
+        MockEndpoint mock = getMockEndpoint("mock:end");
+        mock.expectedMessageCount(MESSAGE_COUNT);
+        for (int i = 0; i < MESSAGE_COUNT; i++) {
+            context.createProducerTemplate().sendBody("direct:start", "Hello!");
+        }
+        MockEndpoint.assertIsSatisfied(context, TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        // Wait for async trace writing to complete — traces are written asynchronously
+        // after exchange processing, so we poll until all traces with expected spans arrive.
+        await().atMost(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .untilAsserted(() -> {
+                    Map<String, MockTrace> traces = mockTracer.traces();
+                    assertEquals(MESSAGE_COUNT, traces.size());
+                    for (MockTrace trace : traces.values()) {
+                        assertEquals(SPAN_COUNT, trace.spans().size());
+                        for (Span span : trace.spans()) {
+                            assertEquals("true", ((MockSpanAdapter) span).getTag("isDone"));
+                        }
+                    }
+                });
+        Map<String, MockTrace> traces = mockTracer.traces();
+        // Each trace should have the same structure
+        for (MockTrace trace : traces.values()) {
+            checkTrace(trace, "Hello!");
+        }
+    }
+
+    private void checkTrace(MockTrace trace, String expectedBody) {
+        List<Span> spans = trace.spans();
+        assertEquals(SPAN_COUNT, spans.size());
+        // Cast to implementation object to be able to
+        // inspect the status of the Span.
+        MockSpanAdapter testProducer = SpanTestSupport.getSpan(spans, "direct://start", Op.EVENT_SENT);
+        MockSpanAdapter direct = SpanTestSupport.getSpan(spans, "direct://start", Op.EVENT_RECEIVED);
+        MockSpanAdapter wiretapDirectTo = SpanTestSupport.getSpan(spans, "direct://tap", Op.EVENT_SENT);
+        MockSpanAdapter wiretapDirectFrom = SpanTestSupport.getSpan(spans, "direct://tap", Op.EVENT_RECEIVED);
+        MockSpanAdapter log = SpanTestSupport.getSpan(spans, "log://info", Op.EVENT_SENT);
+        MockSpanAdapter wiretapLog = SpanTestSupport.getSpan(spans, "log://tapped", Op.EVENT_SENT);
+        MockSpanAdapter wiretapMock = SpanTestSupport.getSpan(spans, "mock://end", Op.EVENT_SENT);
+
+        // Validate span completion
+        assertEquals("true", testProducer.getTag("isDone"));
+        assertEquals("true", direct.getTag("isDone"));
+        assertEquals("true", wiretapDirectTo.getTag("isDone"));
+        assertEquals("true", wiretapDirectFrom.getTag("isDone"));
+        assertEquals("true", log.getTag("isDone"));
+        assertEquals("true", wiretapLog.getTag("isDone"));
+        assertEquals("true", wiretapMock.getTag("isDone"));
+
+        // Validate same trace
+        assertEquals(testProducer.getTag("traceid"), direct.getTag("traceid"));
+        assertEquals(testProducer.getTag("traceid"), wiretapDirectTo.getTag("traceid"));
+        assertEquals(testProducer.getTag("traceid"), wiretapDirectFrom.getTag("traceid"));
+        assertEquals(testProducer.getTag("traceid"), log.getTag("traceid"));
+        assertEquals(testProducer.getTag("traceid"), wiretapLog.getTag("traceid"));
+        assertEquals(testProducer.getTag("traceid"), wiretapMock.getTag("traceid"));
+
+        // Validate different Exchange ID
+        assertNotEquals(testProducer.getTag("exchangeId"), wiretapDirectTo.getTag("exchangeId"));
+        assertEquals(testProducer.getTag("exchangeId"), direct.getTag("exchangeId"));
+        assertEquals(testProducer.getTag("exchangeId"), log.getTag("exchangeId"));
+        assertEquals(wiretapDirectTo.getTag("exchangeId"), wiretapDirectFrom.getTag("exchangeId"));
+        assertEquals(wiretapDirectTo.getTag("exchangeId"), wiretapLog.getTag("exchangeId"));
+        assertEquals(wiretapDirectTo.getTag("exchangeId"), wiretapMock.getTag("exchangeId"));
+
+        // Validate hierarchy
+        assertNull(testProducer.getTag("parentSpan"));
+        assertEquals(testProducer.getTag("spanid"), direct.getTag("parentSpan"));
+        assertEquals(direct.getTag("spanid"), log.getTag("parentSpan"));
+        assertEquals(direct.getTag("spanid"), wiretapDirectTo.getTag("parentSpan"));
+        assertEquals(wiretapDirectTo.getTag("spanid"), wiretapDirectFrom.getTag("parentSpan"));
+        assertEquals(wiretapDirectFrom.getTag("spanid"), wiretapLog.getTag("parentSpan"));
+        assertEquals(wiretapDirectFrom.getTag("spanid"), wiretapMock.getTag("parentSpan"));
+
+        // Validate message logging
+        assertEquals("A direct message", direct.logEntries().get(0).fields().get("message"));
+        assertEquals("A tapped message", wiretapDirectFrom.logEntries().get(0).fields().get("message"));
+        if (expectedBody == null) {
+            assertEquals(
+                    "Exchange[ExchangePattern: InOut, BodyType: null, Body: [Body is null]]",
+                    log.logEntries().get(0).fields().get("message"));
+            assertEquals(
+                    "Exchange[ExchangePattern: InOut, BodyType: null, Body: [Body is null]]",
+                    wiretapLog.logEntries().get(0).fields().get("message"));
+        } else {
+            assertEquals(
+                    "Exchange[ExchangePattern: InOnly, BodyType: String, Body: " + expectedBody + "]",
+                    log.logEntries().get(0).fields().get("message"));
+            assertEquals(
+                    "Exchange[ExchangePattern: InOnly, BodyType: String, Body: " + expectedBody + "]",
+                    wiretapLog.logEntries().get(0).fields().get("message"));
+        }
+    }
+
+    @Override
+    protected RoutesBuilder createRouteBuilder() {
+        return new RouteBuilder() {
+            @Override
+            public void configure() {
+                from("direct:start")
+                        .routeId("start")
+                        .wireTap("direct:tap")
+                        .log("A direct message")
+                        .to("log:info");
+
+                from("direct:tap")
+                        .delay(2000)
+                        .routeId("wiretapped")
+                        .log("A tapped message")
+                        .to("log:tapped")
+                        .to("mock:end");
+            }
+        };
+    }
+}

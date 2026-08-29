@@ -1,0 +1,273 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.dsl.jbang.core.commands.catalog;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import com.github.freva.asciitable.AsciiTable;
+import com.github.freva.asciitable.Column;
+import com.github.freva.asciitable.HorizontalAlign;
+import org.apache.camel.catalog.CamelCatalog;
+import org.apache.camel.catalog.DefaultCamelCatalog;
+import org.apache.camel.dsl.jbang.core.commands.CamelCommand;
+import org.apache.camel.dsl.jbang.core.commands.CamelJBangMain;
+import org.apache.camel.dsl.jbang.core.commands.MavenResolverMixin;
+import org.apache.camel.dsl.jbang.core.commands.QuarkusPlatformMixin;
+import org.apache.camel.dsl.jbang.core.common.CamelTableColumns;
+import org.apache.camel.dsl.jbang.core.common.CatalogLoader;
+import org.apache.camel.dsl.jbang.core.common.RuntimeCompletionCandidates;
+import org.apache.camel.dsl.jbang.core.common.RuntimeType;
+import org.apache.camel.dsl.jbang.core.common.RuntimeTypeConverter;
+import org.apache.camel.dsl.jbang.core.common.TerminalWidthHelper;
+import org.apache.camel.dsl.jbang.core.common.VersionHelper;
+import org.apache.camel.dsl.jbang.core.model.CatalogBaseDTO;
+import org.apache.camel.main.util.SuggestSimilarHelper;
+import org.apache.camel.tooling.maven.MavenGav;
+import org.apache.camel.tooling.model.ArtifactModel;
+import org.apache.camel.util.json.Jsoner;
+import picocli.CommandLine;
+
+public abstract class CatalogBaseCommand extends CamelCommand {
+
+    @CommandLine.Option(names = { "--camel-version" },
+                        description = "To use a different Camel version than the default version")
+    String camelVersion;
+
+    @CommandLine.Option(names = { "--runtime" },
+                        completionCandidates = RuntimeCompletionCandidates.class,
+                        converter = RuntimeTypeConverter.class,
+                        description = "Runtime (${COMPLETION-CANDIDATES})")
+    RuntimeType runtime;
+
+    @CommandLine.Mixin
+    MavenResolverMixin mavenResolver;
+
+    @CommandLine.Mixin
+    QuarkusPlatformMixin quarkusPlatform;
+
+    @CommandLine.Option(names = { "--sort" },
+                        description = "Sort by name, support-level, or description", defaultValue = "name")
+    String sort;
+
+    @CommandLine.Option(names = { "--display-gav" },
+                        description = "Display Maven GAV instead of name", defaultValue = "false")
+    boolean displayGav;
+
+    @CommandLine.Option(names = { "--filter" },
+                        description = "Filter by name or description")
+    String filterName;
+
+    @CommandLine.Option(names = { "--since-before" },
+                        description = "Filter by version older (inclusive)")
+    String sinceBefore;
+
+    @CommandLine.Option(names = { "--since-after" },
+                        description = "Filter by version more recent (inclusive)")
+    String sinceAfter;
+
+    @CommandLine.Option(names = { "--json" },
+                        description = "Output in JSON Format")
+    boolean jsonOutput;
+
+    CamelCatalog catalog;
+
+    protected CatalogBaseCommand(CamelJBangMain main) {
+        super(main);
+    }
+
+    abstract List<Row> collectRows();
+
+    String getGAV(ArtifactModel<?> model) {
+        return model.getGroupId() + ":" + model.getArtifactId() + ":" + model.getVersion();
+    }
+
+    CamelCatalog loadCatalog() throws Exception {
+        if (RuntimeType.springBoot == runtime) {
+            return CatalogLoader.loadSpringBootCatalog(mavenResolver.repos(), camelVersion, mavenResolver.download());
+        } else if (RuntimeType.quarkus == runtime) {
+            final MavenGav quarkusCamelBom
+                    = quarkusPlatform.resolve(
+                            camelVersion,
+                            mavenResolver.downloader()::resolveArtifact,
+                            mavenResolver.download(),
+                            mavenResolver.fresh())
+                            .quarkusCamelBom();
+            return CatalogLoader.loadQuarkusCatalog(quarkusCamelBom, mavenResolver.downloader()::resolveArtifact);
+        }
+        if (camelVersion == null) {
+            return new DefaultCamelCatalog(true);
+        } else {
+            return CatalogLoader.loadCatalog(mavenResolver.repos(), camelVersion, mavenResolver.download());
+        }
+    }
+
+    @Override
+    public Integer doCall() throws Exception {
+        this.catalog = loadCatalog();
+        List<Row> rows = collectRows();
+
+        if (filterName != null) {
+            filterName = filterName.toLowerCase(Locale.ROOT);
+            rows = rows.stream()
+                    .filter(
+                            r -> r.name.equalsIgnoreCase(filterName)
+                                    || (r.description != null
+                                            && r.description.toLowerCase(Locale.ROOT).contains(filterName))
+                                    || (r.label != null && r.label.toLowerCase(Locale.ROOT).contains(filterName)))
+                    .collect(Collectors.toList());
+        }
+        if (sinceBefore != null) {
+            rows = rows.stream()
+                    .filter(r -> VersionHelper.isGE(sinceBefore, r.since))
+                    .collect(Collectors.toList());
+        }
+        if (sinceAfter != null) {
+            rows = rows.stream()
+                    .filter(r -> VersionHelper.isGE(r.since, sinceAfter))
+                    .collect(Collectors.toList());
+        }
+
+        // sort rows
+        rows.sort(this::sortRow);
+
+        if (!rows.isEmpty()) {
+            if (jsonOutput) {
+                printer().println(
+                        Jsoner.serialize(
+                                rows.stream()
+                                        .map(row -> new CatalogBaseDTO(
+                                                row.name, row.title, row.level, row.since, row.nativeSupported, row.description,
+                                                row.label, row.gav, row.deprecated))
+                                        .map(CatalogBaseDTO::toMap)
+                                        .collect(Collectors.toList())));
+            } else {
+                // Size the DESCRIPTION column to fill the terminal: measure the actual width of the other
+                // visible columns and give the remainder to DESCRIPTION (floored on narrow terminals).
+                boolean quarkus = RuntimeType.quarkus == runtime;
+                Function<Row, String> nameGetter = displayGav ? this::shortGav : r -> r.name;
+                int nameW = CamelTableColumns.measure(displayGav ? "ARTIFACT-ID" : "NAME",
+                        displayGav ? Integer.MAX_VALUE : CamelTableColumns.NAME_MAX, rows, nameGetter);
+                int levelW = CamelTableColumns.measure("LEVEL", Integer.MAX_VALUE, rows, this::level);
+                int sinceW = CamelTableColumns.measure("SINCE", Integer.MAX_VALUE, rows, r -> r.since);
+                int overhead = TerminalWidthHelper.noBorderOverhead(quarkus ? 5 : 4);
+                int descWidth = quarkus
+                        ? CamelTableColumns.lastColumnWidth(terminalWidth(), overhead, nameW, levelW, sinceW,
+                                CamelTableColumns.measure("NATIVE", Integer.MAX_VALUE, rows, this::nativeSupported))
+                        : CamelTableColumns.lastColumnWidth(terminalWidth(), overhead, nameW, levelW, sinceW);
+                printer().println(AsciiTable.getTable(AsciiTable.NO_BORDERS, rows, Arrays.asList(
+                        CamelTableColumns.name().visible(!displayGav).with(r -> r.name),
+                        new Column().header("ARTIFACT-ID").visible(displayGav).dataAlign(HorizontalAlign.LEFT)
+                                .with(this::shortGav),
+                        new Column().header("LEVEL").dataAlign(HorizontalAlign.LEFT).with(this::level),
+                        new Column().header("NATIVE").dataAlign(HorizontalAlign.CENTER)
+                                .visible(quarkus).with(this::nativeSupported),
+                        CamelTableColumns.since().with(r -> r.since),
+                        CamelTableColumns.lastText("DESCRIPTION", descWidth).with(this::shortDescription))));
+            }
+        } else if (filterName != null) {
+            // suggest similar names when filter returns no results
+            List<String> allNames = collectRows().stream().map(r -> r.name).collect(Collectors.toList());
+            List<String> suggestions = SuggestSimilarHelper.didYouMean(allNames, filterName);
+            if (!suggestions.isEmpty()) {
+                printer().println("No results for filter: " + filterName + ". Did you mean? " + String.join(", ", suggestions));
+            } else {
+                printer().println("No results for filter: " + filterName);
+            }
+            printer().println("Tip: use 'camel doc " + filterName + "' for detailed documentation.");
+        }
+
+        return 0;
+    }
+
+    int sortRow(Row o1, Row o2) {
+        String s = sort;
+        int negate = 1;
+        if (s.startsWith("-")) {
+            s = s.substring(1);
+            negate = -1;
+        }
+        switch (s) {
+            case "name":
+                return o1.name.compareToIgnoreCase(o2.name) * negate;
+            case "level":
+            case "support-level":
+                return o1.level.compareToIgnoreCase(o2.level) * negate;
+            case "description":
+                return o1.description.compareToIgnoreCase(o2.description) * negate;
+            default:
+                return 0;
+        }
+    }
+
+    String shortGav(Row r) {
+        // only output artifact id
+        return MavenGav.parseGav(r.gav).getArtifactId();
+    }
+
+    String shortDescription(Row r) {
+        if (r.deprecated) {
+            return "DEPRECATED: " + r.description;
+        } else {
+            return r.description;
+        }
+    }
+
+    String level(Row r) {
+        if (r.deprecated) {
+            return "Deprecated";
+        }
+        return r.level;
+    }
+
+    String nativeSupported(Row r) {
+        return r.nativeSupported ? "x" : "";
+    }
+
+    static String fixQuarkusSince(String since) {
+        // quarkus-catalog may have 0.1 and 0.0.1 versions that are really 1.0
+        if (since != null && since.startsWith("0")) {
+            return "1.0";
+        }
+        return since;
+    }
+
+    static List<String> findComponentNames(CamelCatalog catalog) {
+        List<String> answer = catalog.findComponentNames();
+        List<String> copy = new ArrayList<>(answer);
+        // remove empty (spring boot catalog has a bug)
+        copy.removeIf(String::isBlank);
+        return copy;
+    }
+
+    static class Row {
+        String name;
+        String title;
+        String level;
+        String since;
+        boolean nativeSupported;
+        String description;
+        String label;
+        String gav;
+        boolean deprecated;
+    }
+
+}

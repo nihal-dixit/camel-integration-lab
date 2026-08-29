@@ -1,0 +1,187 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.component.spring.ws.filter.impl;
+
+import jakarta.activation.DataHandler;
+
+import javax.xml.namespace.QName;
+
+import org.apache.camel.attachment.AttachmentMessage;
+import org.apache.camel.component.spring.ws.SpringWebserviceConstants;
+import org.apache.camel.test.junit6.ExchangeTestSupport;
+import org.assertj.core.util.Streams;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.ws.pox.dom.DomPoxMessage;
+import org.springframework.ws.pox.dom.DomPoxMessageFactory;
+import org.springframework.ws.soap.SoapMessage;
+import org.springframework.ws.soap.saaj.SaajSoapMessageFactory;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
+class BasicMessageFilterTest extends ExchangeTestSupport {
+
+    private BasicMessageFilter filter;
+    private SoapMessage message;
+
+    @BeforeEach
+    public void before() {
+        filter = new BasicMessageFilter();
+        SaajSoapMessageFactory saajSoapMessageFactory = new SaajSoapMessageFactory();
+        saajSoapMessageFactory.afterPropertiesSet();
+        message = saajSoapMessageFactory.createWebServiceMessage();
+    }
+
+    @Test
+    void testNulls() {
+        // Verify null-safety: each method should handle null arguments gracefully
+        assertThatCode(() -> filter.filterConsumer(null, null)).doesNotThrowAnyException();
+        assertThatCode(() -> filter.filterProducer(null, null)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void testNullsWithExchange() {
+        // capture exchange state before filtering with null message
+        int headerCountBefore = exchange.getIn().getHeaders().size();
+        Object bodyBefore = exchange.getIn().getBody();
+
+        filter.filterConsumer(exchange, null);
+        filter.filterProducer(exchange, null);
+
+        // verify the exchange was not modified when message is null
+        assertThat(exchange.getIn().getHeaders()).hasSize(headerCountBefore);
+        assertThat(exchange.getIn().getBody()).isEqualTo(bodyBefore);
+    }
+
+    @Test
+    void nonSoapMessageShouldBeSkipped() {
+        DomPoxMessage domPoxMessage = new DomPoxMessageFactory().createWebServiceMessage();
+
+        filter.filterConsumer(exchange, domPoxMessage);
+        filter.filterProducer(exchange, domPoxMessage);
+
+        // verify the exchange headers were not modified for non-SOAP messages
+        assertThat(exchange.getIn().getHeader("foo")).isEqualTo("abc");
+        assertThat(exchange.getIn().getHeader("bar")).isEqualTo(123);
+    }
+
+    @Test
+    public void withoutHeader() throws Exception {
+        exchange.getIn().getHeaders().clear();
+        exchange.getOut().getHeaders().clear();
+
+        if (exchange.getIn(AttachmentMessage.class).hasAttachments()) {
+            exchange.getIn(AttachmentMessage.class).getAttachments().clear();
+        }
+        if (exchange.getOut(AttachmentMessage.class).hasAttachments()) {
+            exchange.getOut(AttachmentMessage.class).getAttachments().clear();
+        }
+
+        filter.filterProducer(exchange, message);
+        filter.filterConsumer(exchange, message);
+
+        assertThat(message.getAttachments()).isExhausted();
+        assertThat(message.getSoapHeader().examineAllHeaderElements()).isExhausted();
+
+        assertThat(message.getSoapHeader().getAllAttributes()).isExhausted();
+    }
+
+    @Test
+    public void removeCamelInternalHeaderAttributes() throws Exception {
+        exchange.getOut().getHeaders().put(SpringWebserviceConstants.SPRING_WS_SOAP_ACTION, "mustBeRemoved");
+        exchange.getOut().getHeaders().put(SpringWebserviceConstants.SPRING_WS_ADDRESSING_ACTION, "mustBeRemoved");
+        exchange.getOut().getHeaders().put(SpringWebserviceConstants.SPRING_WS_ADDRESSING_PRODUCER_FAULT_TO, "mustBeRemoved");
+        exchange.getOut().getHeaders().put(SpringWebserviceConstants.SPRING_WS_ADDRESSING_PRODUCER_REPLY_TO, "mustBeRemoved");
+        exchange.getOut().getHeaders().put(SpringWebserviceConstants.SPRING_WS_ADDRESSING_CONSUMER_FAULT_ACTION,
+                "mustBeRemoved");
+        exchange.getOut().getHeaders().put(SpringWebserviceConstants.SPRING_WS_ADDRESSING_CONSUMER_OUTPUT_ACTION,
+                "mustBeRemoved");
+        exchange.getOut().getHeaders().put(SpringWebserviceConstants.SPRING_WS_ENDPOINT_URI, "mustBeRemoved");
+
+        exchange.getOut().getHeaders().put("breadcrumbId", "mustBeRemoved");
+
+        filter.filterConsumer(exchange, message);
+
+        assertThat(message.getAttachments()).isExhausted();
+        assertThat(message.getSoapHeader().examineAllHeaderElements()).isExhausted();
+
+        assertThat(message.getSoapHeader().getAllAttributes()).isExhausted();
+    }
+
+    @Test
+    public void consumerWithHeader() throws Exception {
+        exchange.getOut().getHeaders().put("headerAttributeKey", "testAttributeValue");
+        exchange.getOut().getHeaders().put("headerAttributeElement", new QName("http://shouldBeInHeader", "myElement"));
+        filter.filterConsumer(exchange, message);
+
+        assertThat(message.getAttachments()).isExhausted();
+
+        assertThat(Streams.stream(message.getSoapHeader().examineAllHeaderElements()).toList()).isNotEmpty()
+                .hasSize(1);
+
+        assertThat(Streams.stream(message.getSoapHeader().getAllAttributes()).toList()).isNotEmpty().hasSize(1);
+
+    }
+
+    @Test
+    public void producerWithHeader() throws Exception {
+        // foo is already in the header.in from the parent ExchangeTestSupport
+        exchange.getIn().getHeaders().put("headerAttributeKey", "testAttributeValue");
+        exchange.getIn().getHeaders().put("headerAttributeElement", new QName("http://shouldBeInHeader", "myElement"));
+
+        filter.filterProducer(exchange, message);
+
+        assertThat(message.getAttachments()).isExhausted();
+
+        assertThat(Streams.stream(message.getSoapHeader().examineAllHeaderElements()).toList()).isNotEmpty()
+                .hasSize(1);
+
+        assertThat(Streams.stream(message.getSoapHeader().getAllAttributes()).toList()).isNotEmpty().hasSize(2);
+
+    }
+
+    @Test
+    public void withoutAttachment() throws Exception {
+        filter.filterConsumer(exchange, message);
+        filter.filterProducer(exchange, message);
+
+        assertThat(message.getAttachments()).isExhausted();
+    }
+
+    @Test
+    public void producerWithAttachment() throws Exception {
+        exchange.getIn(AttachmentMessage.class).addAttachment("testAttachment",
+                new DataHandler(this.getClass().getResource("/sampleAttachment.txt")));
+
+        filter.filterProducer(exchange, message);
+
+        assertThat(Streams.stream(message.getAttachments()).toList()).isNotEmpty();
+        assertThat(message.getAttachment("testAttachment")).isNotNull();
+    }
+
+    @Test
+    public void consumerWithAttachment() throws Exception {
+        exchange.getMessage(AttachmentMessage.class).addAttachment("testAttachment",
+                new DataHandler(this.getClass().getResource("/sampleAttachment.txt")));
+
+        filter.filterConsumer(exchange, message);
+
+        assertThat(Streams.stream(message.getAttachments()).toList()).isNotEmpty();
+        assertThat(message.getAttachment("testAttachment")).isNotNull();
+    }
+}

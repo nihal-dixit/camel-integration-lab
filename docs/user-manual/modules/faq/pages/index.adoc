@@ -1,0 +1,25 @@
+= Frequently Asked Questions
+
+Here are a list of commonly asked questions and answers. If you have any
+questions which are not on this list, please talk to us on the
+link:/community/mailing-list/[Mailing Lists].
+
+We link:/community/contributing/[welcome contributions] and
+this entire website is in the GitHub repository you can send a pull request,
+so please join in and help us make the documentation better!
+
+[[FAQ-GeneralQuestions]]
+== General Questions
+
+General questions about Camel
+
+* xref:can-i-get-commercial-support.adoc[Can I get commercial support?]
+* link:/community/support/[How can I get help?]
+* xref:how-can-i-get-the-source-code.adoc[How can I get the source code?]
+* xref:how-do-i-become-a-committer.adoc[How do I become a committer?]
+* xref:how-do-i-edit-the-website.adoc[How do I edit the website?]
+* xref:what-is-camel.adoc[What is Camel?]
+* xref:ROOT:languages.adoc[What languages are supported?]
+* xref:why-the-name-camel.adoc[Why the name Camel?]
+
+

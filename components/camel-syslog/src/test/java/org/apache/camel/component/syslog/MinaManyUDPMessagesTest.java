@@ -1,0 +1,87 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.component.syslog;
+
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.camel.Exchange;
+import org.apache.camel.Processor;
+import org.apache.camel.builder.RouteBuilder;
+import org.apache.camel.component.mock.MockEndpoint;
+import org.apache.camel.spi.DataFormat;
+import org.apache.camel.test.AvailablePortFinder;
+import org.apache.camel.test.junit6.CamelTestSupport;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class MinaManyUDPMessagesTest extends CamelTestSupport {
+
+    @RegisterExtension
+    AvailablePortFinder.Port serverPort = AvailablePortFinder.find();
+    private final int messageCount = 100;
+    private final String message
+            = "<165>Aug  4 05:34:00 mymachine myproc[10]: %% It's\n         time to make the do-nuts.  %%  Ingredients: Mix=OK, Jelly=OK #\n"
+              + "         Devices: Mixer=OK, Jelly_Injector=OK, Frier=OK # Transport:\n"
+              + "         Conveyer1=OK, Conveyer2=OK # %%";
+
+    @Test
+    public void testSendingManyMessages() throws Exception {
+        MockEndpoint stop1 = getMockEndpoint("mock:stop1");
+        MockEndpoint stop2 = getMockEndpoint("mock:stop2");
+        stop2.expectedMessageCount(messageCount);
+        stop1.expectedMessageCount(messageCount);
+
+        DatagramSocket socket = new DatagramSocket();
+        try {
+            InetAddress address = InetAddress.getByName("127.0.0.1");
+            for (int i = 0; i < messageCount; i++) {
+
+                byte[] data = message.getBytes();
+
+                DatagramPacket packet = new DatagramPacket(data, data.length, address, serverPort.getPort());
+                socket.send(packet);
+            }
+        } finally {
+            socket.close();
+        }
+
+        MockEndpoint.assertIsSatisfied(context, 20, TimeUnit.SECONDS);
+    }
+
+    @Override
+    protected RouteBuilder createRouteBuilder() {
+        return new RouteBuilder() {
+            public void configure() {
+
+                //context.setTracing(true);
+                DataFormat syslogDataFormat = new SyslogDataFormat();
+
+                // we setup a Syslog  listener on a random port.
+                from("mina:udp://127.0.0.1:" + serverPort.getPort()).unmarshal(syslogDataFormat).process(new Processor() {
+                    public void process(Exchange ex) {
+                        assertTrue(ex.getIn().getBody() instanceof SyslogMessage);
+                    }
+                }).to("mock:stop1").marshal(syslogDataFormat).to("mock:stop2");
+            }
+        };
+    }
+}

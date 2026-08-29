@@ -1,0 +1,173 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.component.grpc;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
+import io.grpc.StatusRuntimeException;
+import io.grpc.stub.StreamObserver;
+import org.apache.camel.CamelException;
+import org.apache.camel.builder.RouteBuilder;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+public class GrpcConsumerExceptionTest extends GrpcTestSupport {
+
+    private static final Logger LOG = LoggerFactory.getLogger(GrpcConsumerExceptionTest.class);
+
+    private static final int GRPC_TEST_PING_ID = 1;
+    private static final String GRPC_TEST_PING_VALUE = "PING";
+    private static final String ROUTE_EXCEPTION_MESSAGE = "GRPC Camel exception message";
+
+    private ManagedChannel syncRequestChannel;
+    private ManagedChannel unmutedChannel;
+    private PingPongGrpc.PingPongBlockingStub unmutedStub;
+    private PingPongGrpc.PingPongBlockingStub blockingStub;
+    private PingPongGrpc.PingPongStub unmutedNonBlockingStub;
+
+    @BeforeEach
+    public void startGrpcChannels() {
+        int port = getRoutePort("grpc-exception");
+        syncRequestChannel = ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build();
+        blockingStub = PingPongGrpc.newBlockingStub(syncRequestChannel);
+
+        int unmutedPort = getRoutePort("grpc-exception-unmuted");
+        unmutedChannel = ManagedChannelBuilder.forAddress("localhost", unmutedPort).usePlaintext().build();
+        unmutedStub = PingPongGrpc.newBlockingStub(unmutedChannel);
+        unmutedNonBlockingStub = PingPongGrpc.newStub(unmutedChannel);
+    }
+
+    @AfterEach
+    public void stopGrpcChannels() {
+        if (syncRequestChannel != null) {
+            syncRequestChannel.shutdown().shutdownNow();
+        }
+        if (unmutedChannel != null) {
+            unmutedChannel.shutdown().shutdownNow();
+        }
+    }
+
+    /**
+     * The Status description is transmitted to the client - unlike the cause, which stays local - so by default it must
+     * not carry the route exception's message.
+     */
+    @Test
+    public void theStatusDescriptionDoesNotCarryTheRouteExceptionByDefault() {
+        PingRequest pingRequest
+                = PingRequest.newBuilder().setPingName(GRPC_TEST_PING_VALUE).setPingId(GRPC_TEST_PING_ID).build();
+
+        StatusRuntimeException e
+                = assertThrows(StatusRuntimeException.class, () -> blockingStub.pingSyncSync(pingRequest));
+
+        assertFalse(e.getStatus().getDescription().contains(ROUTE_EXCEPTION_MESSAGE),
+                "the status description must not carry the route exception's message: " + e.getStatus());
+    }
+
+    @Test
+    public void muteExceptionFalseCarriesTheRouteExceptionAsBefore() {
+        PingRequest pingRequest
+                = PingRequest.newBuilder().setPingName(GRPC_TEST_PING_VALUE).setPingId(GRPC_TEST_PING_ID).build();
+
+        StatusRuntimeException e
+                = assertThrows(StatusRuntimeException.class, () -> unmutedStub.pingSyncSync(pingRequest));
+
+        assertTrue(e.getStatus().getDescription().contains(ROUTE_EXCEPTION_MESSAGE),
+                "expected the route exception message with muteException=false: " + e.getStatus());
+    }
+
+    @Test
+    public void testExceptionExpected() {
+        LOG.info("gRPC expected exception test start");
+        PingRequest pingRequest
+                = PingRequest.newBuilder().setPingName(GRPC_TEST_PING_VALUE).setPingId(GRPC_TEST_PING_ID).build();
+        assertThrows(StatusRuntimeException.class, () -> blockingStub.pingSyncSync(pingRequest));
+    }
+
+    @Test
+    public void testExchangeExceptionHandling() {
+        LOG.info("gRPC exchange exception handling test start");
+        assertDoesNotThrow(this::runExchangeExceptionHandlingTest);
+    }
+
+    private void runExchangeExceptionHandlingTest() throws InterruptedException {
+        final CountDownLatch latch = new CountDownLatch(1);
+        PingRequest pingRequest
+                = PingRequest.newBuilder().setPingName(GRPC_TEST_PING_VALUE).setPingId(GRPC_TEST_PING_ID).build();
+        PongResponseStreamObserver responseObserver = new PongResponseStreamObserver(latch);
+
+        unmutedNonBlockingStub.pingSyncSync(pingRequest, responseObserver);
+        assertTrue(latch.await(5, TimeUnit.SECONDS));
+    }
+
+    @Override
+    protected RouteBuilder createRouteBuilder() {
+        return new RouteBuilder() {
+            @Override
+            public void configure() {
+                from("grpc://localhost:0/org.apache.camel.component.grpc.PingPong?synchronous=true")
+                        .routeId("grpc-exception")
+                        .throwException(CamelException.class, ROUTE_EXCEPTION_MESSAGE);
+
+                from("grpc://localhost:0/org.apache.camel.component.grpc.PingPong?synchronous=true&muteException=false")
+                        .routeId("grpc-exception-unmuted")
+                        .throwException(CamelException.class, ROUTE_EXCEPTION_MESSAGE);
+            }
+        };
+    }
+
+    static class PongResponseStreamObserver implements StreamObserver<PongResponse> {
+        private PongResponse pongResponse;
+        private final CountDownLatch latch;
+
+        public PongResponseStreamObserver(CountDownLatch latch) {
+            this.latch = latch;
+        }
+
+        public PongResponse getPongResponse() {
+            return pongResponse;
+        }
+
+        @Override
+        public void onNext(PongResponse value) {
+            pongResponse = value;
+        }
+
+        @Override
+        public void onError(Throwable t) {
+            assertEquals("INTERNAL: GRPC Camel exception message", t.getMessage());
+            LOG.info("Exception", t);
+            latch.countDown();
+        }
+
+        @Override
+        public void onCompleted() {
+            latch.countDown();
+        }
+    }
+}

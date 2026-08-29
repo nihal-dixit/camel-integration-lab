@@ -1,0 +1,105 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+org.apache.camel.telemetry.decorators.ActiveMQ6SpanDecorator
+org.apache.camel.telemetry.decorators.ActiveMQSpanDecorator
+org.apache.camel.telemetry.decorators.AhcSpanDecorator
+org.apache.camel.telemetry.decorators.AmqpSpanDecorator
+org.apache.camel.telemetry.decorators.AwsAthenaSpanDecorator
+org.apache.camel.telemetry.decorators.AwsBedrockSpanDecorator
+org.apache.camel.telemetry.decorators.AwsCloudtrailSpanDecorator
+org.apache.camel.telemetry.decorators.AwsComprehendSpanDecorator
+org.apache.camel.telemetry.decorators.AwsConfigSpanDecorator
+org.apache.camel.telemetry.decorators.AwsCwSpanDecorator
+org.apache.camel.telemetry.decorators.AwsDdbSpanDecorator
+org.apache.camel.telemetry.decorators.AwsDdbStreamSpanDecorator
+org.apache.camel.telemetry.decorators.AwsEc2SpanDecorator
+org.apache.camel.telemetry.decorators.AwsEcsSpanDecorator
+org.apache.camel.telemetry.decorators.AwsEksSpanDecorator
+org.apache.camel.telemetry.decorators.AwsEventbridgeSpanDecorator
+org.apache.camel.telemetry.decorators.AwsIamSpanDecorator
+org.apache.camel.telemetry.decorators.AwsKinesisFirehoseSpanDecorator
+org.apache.camel.telemetry.decorators.AwsKinesisSpanDecorator
+org.apache.camel.telemetry.decorators.AwsKmsSpanDecorator
+org.apache.camel.telemetry.decorators.AwsLambdaSpanDecorator
+org.apache.camel.telemetry.decorators.AwsMqSpanDecorator
+org.apache.camel.telemetry.decorators.AwsMskSpanDecorator
+org.apache.camel.telemetry.decorators.AwsParameterStoreSpanDecorator
+org.apache.camel.telemetry.decorators.AwsPollySpanDecorator
+org.apache.camel.telemetry.decorators.AwsRedshiftDataSpanDecorator
+org.apache.camel.telemetry.decorators.AwsRekognitionSpanDecorator
+org.apache.camel.telemetry.decorators.AwsS3SpanDecorator
+org.apache.camel.telemetry.decorators.AwsS3VectorsSpanDecorator
+org.apache.camel.telemetry.decorators.AwsSecretsManagerSpanDecorator
+org.apache.camel.telemetry.decorators.AwsSecurityHubSpanDecorator
+org.apache.camel.telemetry.decorators.AwsSesSpanDecorator
+org.apache.camel.telemetry.decorators.AwsSnsSpanDecorator
+org.apache.camel.telemetry.decorators.AwsSqsSpanDecorator
+org.apache.camel.telemetry.decorators.AwsStepFunctionsSpanDecorator
+org.apache.camel.telemetry.decorators.AwsStsSpanDecorator
+org.apache.camel.telemetry.decorators.AwsTextractSpanDecorator
+org.apache.camel.telemetry.decorators.AwsTimestreamSpanDecorator
+org.apache.camel.telemetry.decorators.AwsTranscribeSpanDecorator
+org.apache.camel.telemetry.decorators.AwsTranslateSpanDecorator
+org.apache.camel.telemetry.decorators.AzureServiceBusSpanDecorator
+org.apache.camel.telemetry.decorators.CometdSpanDecorator
+org.apache.camel.telemetry.decorators.CometdsSpanDecorator
+org.apache.camel.telemetry.decorators.CqlSpanDecorator
+org.apache.camel.telemetry.decorators.DirectSpanDecorator
+org.apache.camel.telemetry.decorators.DisruptorSpanDecorator
+org.apache.camel.telemetry.decorators.DisruptorvmSpanDecorator
+org.apache.camel.telemetry.decorators.ElasticsearchSpanDecorator
+org.apache.camel.telemetry.decorators.FileSpanDecorator
+org.apache.camel.telemetry.decorators.FtpSpanDecorator
+org.apache.camel.telemetry.decorators.FtpsSpanDecorator
+org.apache.camel.telemetry.decorators.GoogleBigQuerySpanDecorator
+org.apache.camel.telemetry.decorators.GoogleFirestoreSpanDecorator
+org.apache.camel.telemetry.decorators.GoogleFunctionsSpanDecorator
+org.apache.camel.telemetry.decorators.GooglePubsubSpanDecorator
+org.apache.camel.telemetry.decorators.GoogleSecretManagerSpanDecorator
+org.apache.camel.telemetry.decorators.GoogleSpeechToTextSpanDecorator
+org.apache.camel.telemetry.decorators.GoogleStorageSpanDecorator
+org.apache.camel.telemetry.decorators.GoogleTextToSpeechSpanDecorator
+org.apache.camel.telemetry.decorators.GoogleVertexAISpanDecorator
+org.apache.camel.telemetry.decorators.GoogleVisionSpanDecorator
+org.apache.camel.telemetry.decorators.HttpSpanDecorator
+org.apache.camel.telemetry.decorators.HttpsSpanDecorator
+org.apache.camel.telemetry.decorators.IronmqSpanDecorator
+org.apache.camel.telemetry.decorators.JdbcSpanDecorator
+org.apache.camel.telemetry.decorators.JettySpanDecorator
+org.apache.camel.telemetry.decorators.JmsSpanDecorator
+org.apache.camel.telemetry.decorators.KafkaSpanDecorator
+org.apache.camel.telemetry.decorators.LogSpanDecorator
+org.apache.camel.telemetry.decorators.MongoDBSpanDecorator
+org.apache.camel.telemetry.decorators.NatsSpanDecorator
+org.apache.camel.telemetry.decorators.NettyHttpSpanDecorator
+org.apache.camel.telemetry.decorators.Paho5SpanDecorator
+org.apache.camel.telemetry.decorators.PahoSpanDecorator
+org.apache.camel.telemetry.decorators.PlatformHttpSpanDecorator
+org.apache.camel.telemetry.decorators.RestOpenapiSpanDecorator
+org.apache.camel.telemetry.decorators.RestSpanDecorator
+org.apache.camel.telemetry.decorators.SchedulerSpanDecorator
+org.apache.camel.telemetry.decorators.SedaSpanDecorator
+org.apache.camel.telemetry.decorators.ServletSpanDecorator
+org.apache.camel.telemetry.decorators.SftpSpanDecorator
+org.apache.camel.telemetry.decorators.Sjms2SpanDecorator
+org.apache.camel.telemetry.decorators.SjmsSpanDecorator
+org.apache.camel.telemetry.decorators.SpringRabbitmqSpanDecorator
+org.apache.camel.telemetry.decorators.SqlSpanDecorator
+org.apache.camel.telemetry.decorators.TimerSpanDecorator
+org.apache.camel.telemetry.decorators.UndertowSpanDecorator
+org.apache.camel.telemetry.decorators.VertxHttpSpanDecorator

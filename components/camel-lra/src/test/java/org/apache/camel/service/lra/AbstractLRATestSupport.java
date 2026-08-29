@@ -1,0 +1,136 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.service.lra;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.camel.CamelContext;
+import org.apache.camel.builder.RouteBuilder;
+import org.apache.camel.test.AvailablePortFinder;
+import org.apache.camel.test.infra.microprofile.lra.services.MicroprofileLRAService;
+import org.apache.camel.test.infra.microprofile.lra.services.MicroprofileLRAServiceFactory;
+import org.apache.camel.test.junit6.CamelTestSupport;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.awaitility.Awaitility.await;
+
+/**
+ * Base class for LRA based tests.
+ */
+public abstract class AbstractLRATestSupport extends CamelTestSupport {
+
+    @RegisterExtension
+    static MicroprofileLRAService service = MicroprofileLRAServiceFactory.createSingletonService();
+
+    @RegisterExtension
+    AvailablePortFinder.Port serverPortHolder = AvailablePortFinder.find();
+
+    private int activeLRAs;
+
+    @BeforeEach
+    public void getActiveLRAs() throws IOException, InterruptedException {
+        this.activeLRAs = getNumberOfActiveLRAs();
+    }
+
+    @AfterEach
+    public void checkActiveLRAs() throws IOException, InterruptedException {
+        // After a test that exercises LRA recovery (e.g., LRAFailuresIT), the
+        // coordinator may need a recovery cycle to close the LRA. Trigger
+        // recovery explicitly rather than waiting for the periodic scan
+        // (default period: 120s).
+        await().atMost(60, SECONDS)
+                .pollInterval(2, SECONDS)
+                .pollDelay(1, SECONDS)
+                .alias("Some LRA have been left pending")
+                .until(() -> {
+                    triggerRecovery();
+                    return getNumberOfActiveLRAs() == activeLRAs;
+                });
+    }
+
+    /**
+     * Triggers a recovery scan on the LRA coordinator via its REST endpoint.
+     */
+    protected void triggerRecovery() {
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(service.getServiceAddress() + "/lra-coordinator/recovery"))
+                    .GET()
+                    .build();
+            client.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (Exception e) {
+            // Best-effort — the periodic recovery manager will eventually run
+        }
+    }
+
+    @Override
+    protected CamelContext createCamelContext() throws Exception {
+        CamelContext context = super.createCamelContext();
+
+        context.addService(createLRASagaService());
+
+        context.addRoutes(new RouteBuilder() {
+            @Override
+            public void configure() {
+                restConfiguration()
+                        .port(getServerPort());
+            }
+        });
+
+        return context;
+    }
+
+    protected LRASagaService createLRASagaService() {
+        LRASagaService sagaService = new LRASagaService();
+        sagaService.setCoordinatorUrl(getCoordinatorURL());
+        sagaService.setLocalParticipantUrl(
+                String.format("http://%s:%d", service.callbackHost(), getServerPort()));
+        return sagaService;
+    }
+
+    protected int getNumberOfActiveLRAs() throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newHttpClient();
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(getCoordinatorURL() + "/lra-coordinator"))
+                .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode lras = mapper.readTree(response.body());
+        return lras.size();
+    }
+
+    private String getCoordinatorURL() {
+        return service.getServiceAddress();
+    }
+
+    protected int getServerPort() {
+        return serverPortHolder.getPort();
+    }
+}

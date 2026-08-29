@@ -1,0 +1,32 @@
+{
+  "console": {
+    "kind": "console",
+    "group": "camel",
+    "name": "vertx-websocket",
+    "title": "Vert.x WebSocket",
+    "description": "Vert.x WebSocket consumer details",
+    "deprecated": false,
+    "javaType": "org.apache.camel.component.vertx.websocket.VertxWebsocketDevConsole",
+    "groupId": "org.apache.camel",
+    "artifactId": "camel-vertx-websocket",
+    "version": "4.23.0-SNAPSHOT"
+  },
+  "options": {
+    "includeHeaders": {
+      "index": 0,
+      "kind": "option",
+      "displayName": "Include Headers",
+      "group": "query",
+      "label": "query",
+      "required": false,
+      "type": "boolean",
+      "javaType": "java.lang.Boolean",
+      "deprecated": false,
+      "autowired": false,
+      "secret": false,
+      "defaultValue": true,
+      "description": "Whether to include WebSocket peer connection header details in the output"
+    }
+  }
+}
+

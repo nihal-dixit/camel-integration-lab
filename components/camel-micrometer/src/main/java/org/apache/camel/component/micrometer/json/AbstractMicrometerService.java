@@ -1,0 +1,494 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.camel.component.micrometer.json;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.FunctionCounter;
+import io.micrometer.core.instrument.FunctionTimer;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.LongTaskTimer;
+import io.micrometer.core.instrument.Meter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tag;
+import io.micrometer.core.instrument.Tags;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.apache.camel.CamelContext;
+import org.apache.camel.RuntimeCamelException;
+import org.apache.camel.component.micrometer.MicrometerConstants;
+import org.apache.camel.spi.Registry;
+import org.apache.camel.support.service.ServiceSupport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import static org.apache.camel.component.micrometer.MicrometerConstants.APP_INFO_METER_NAME;
+
+public class AbstractMicrometerService extends ServiceSupport {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AbstractMicrometerService.class);
+
+    private CamelContext camelContext;
+    private MeterRegistry meterRegistry;
+    private boolean prettyPrint = true;
+    private boolean skipCamelInfo = false;
+    private boolean logMetricsOnShutdown = false;
+    private String logMetricsOnShutdownFormat = "json";
+    private String logMetricsOnShutdownFilters[];
+    private TimeUnit durationUnit = TimeUnit.MILLISECONDS;
+    private Iterable<Tag> matchingTags = Tags.empty();
+    private Predicate<String> matchingNames;
+    private transient ObjectMapper mapper;
+    private transient ObjectMapper secondsMapper;
+
+    public MeterRegistry getMeterRegistry() {
+        return meterRegistry;
+    }
+
+    public void setMeterRegistry(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+    }
+
+    public CamelContext getCamelContext() {
+        return camelContext;
+    }
+
+    public void setCamelContext(CamelContext camelContext) {
+        this.camelContext = camelContext;
+    }
+
+    public boolean isPrettyPrint() {
+        return prettyPrint;
+    }
+
+    public void setPrettyPrint(boolean prettyPrint) {
+        this.prettyPrint = prettyPrint;
+    }
+
+    public boolean isSkipCamelInfo() {
+        return skipCamelInfo;
+    }
+
+    public void setSkipCamelInfo(boolean skipCamelInfo) {
+        this.skipCamelInfo = skipCamelInfo;
+    }
+
+    public boolean isLogMetricsOnShutdown() {
+        return logMetricsOnShutdown;
+    }
+
+    public void setLogMetricsOnShutdown(boolean logMetricsOnShutdown) {
+        this.logMetricsOnShutdown = logMetricsOnShutdown;
+    }
+
+    /**
+     * Returns the output format used when logging metrics on shutdown. Accepted values are {@code "json"} (default) and
+     * {@code "prometheus"}.
+     */
+    public String getLogMetricsOnShutdownFormat() {
+        return logMetricsOnShutdownFormat;
+    }
+
+    /**
+     * Sets the output format used when logging metrics on shutdown. Accepted values are {@code "json"} (default) and
+     * {@code "prometheus"}.
+     */
+    public void setLogMetricsOnShutdownFormat(String logMetricsOnShutdownFormat) {
+        this.logMetricsOnShutdownFormat = logMetricsOnShutdownFormat;
+    }
+
+    public String[] getLogMetricsOnShutdownFilters() {
+        return logMetricsOnShutdownFilters;
+    }
+
+    public void setLogMetricsOnShutdownFilters(String... logMetricsOnShutdownFilters) {
+        this.logMetricsOnShutdownFilters = logMetricsOnShutdownFilters;
+    }
+
+    public TimeUnit getDurationUnit() {
+        return durationUnit;
+    }
+
+    public void setDurationUnit(TimeUnit durationUnit) {
+        this.durationUnit = durationUnit;
+    }
+
+    public Iterable<Tag> getMatchingTags() {
+        return matchingTags;
+    }
+
+    public void setMatchingTags(Iterable<Tag> matchingTags) {
+        this.matchingTags = matchingTags;
+    }
+
+    public Predicate<String> getMatchingNames() {
+        return matchingNames;
+    }
+
+    public void setMatchingNames(Predicate<String> matchingNames) {
+        this.matchingNames = matchingNames;
+    }
+
+    public String dumpStatisticsAsJson() {
+        ObjectWriter writer = mapper.writer();
+        if (isPrettyPrint()) {
+            writer = writer.withDefaultPrettyPrinter();
+        }
+        try {
+            return writer.writeValueAsString(getMeterRegistry());
+        } catch (JsonProcessingException e) {
+            throw RuntimeCamelException.wrapRuntimeCamelException(e);
+        }
+    }
+
+    public String dumpStatisticsAsJsonTimeUnitSeconds() {
+        ObjectWriter writer = secondsMapper.writer();
+        if (isPrettyPrint()) {
+            writer = writer.withDefaultPrettyPrinter();
+        }
+        try {
+            return writer.writeValueAsString(getMeterRegistry());
+        } catch (JsonProcessingException e) {
+            throw RuntimeCamelException.wrapRuntimeCamelException(e);
+        }
+    }
+
+    @Override
+    protected void doStart() {
+        if (meterRegistry == null) {
+            Registry camelRegistry = getCamelContext().getRegistry();
+            meterRegistry = camelRegistry.lookupByNameAndType(MicrometerConstants.METRICS_REGISTRY_NAME, MeterRegistry.class);
+            // create a new metricsRegistry by default
+            if (meterRegistry == null) {
+                meterRegistry = new SimpleMeterRegistry();
+            }
+        }
+
+        if (!isSkipCamelInfo()) {
+            registerAppInfo(meterRegistry);
+        }
+
+        // json mapper
+        this.mapper = new ObjectMapper()
+                .registerModule(new MicrometerModule(getDurationUnit(), getMatchingNames(), getMatchingTags()));
+        this.secondsMapper = getDurationUnit() == TimeUnit.SECONDS
+                ? this.mapper
+                : new ObjectMapper()
+                        .registerModule(new MicrometerModule(TimeUnit.SECONDS, getMatchingNames(), getMatchingTags()));
+    }
+
+    @Override
+    protected void doStop() {
+        if (logMetricsOnShutdown) {
+            LOG.warn("Micrometer service is stopping, here a list of metrics collected so far.");
+            // Default: all metrics
+            logMetricsOnShutdown(logMetricsOnShutdownFilters == null ? new String[] { "*" } : logMetricsOnShutdownFilters);
+        }
+    }
+
+    static boolean matchesFilter(String metricName, String... filters) {
+        for (String filter : filters) {
+            if (filter.contains("*")) {
+                if (metricName.contains(filter.replace("*", ""))) {
+                    return true;
+                }
+            } else if (filter.equals(metricName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static Map<String, Object> convertMeterToMap(Meter meter) {
+        Map<String, Object> logEntry = new HashMap<>();
+        logEntry.put("name", meter.getId().getName());
+        logEntry.put("tags", meter.getId().getTags().stream()
+                .collect(Collectors.toMap(Tag::getKey, Tag::getValue)));
+
+        if (meter instanceof Gauge g) {
+            logEntry.put("type", "gauge");
+            logEntry.put("value", g.value());
+        } else if (meter instanceof Counter c) {
+            logEntry.put("type", "counter");
+            logEntry.put("value", c.count());
+        } else if (meter instanceof Timer t) {
+            logEntry.put("type", "timer");
+            logEntry.put("totalTimeMs", t.totalTime(TimeUnit.MILLISECONDS));
+            logEntry.put("count", t.count());
+            logEntry.put("maxTimeMs", t.max(TimeUnit.MILLISECONDS));
+        } else if (meter instanceof DistributionSummary ds) {
+            logEntry.put("type", "summary");
+            logEntry.put("total", ds.totalAmount());
+            logEntry.put("count", ds.count());
+            logEntry.put("max", ds.max());
+        } else if (meter instanceof FunctionCounter fc) {
+            logEntry.put("type", "functionCounter");
+            logEntry.put("value", fc.count());
+        } else if (meter instanceof FunctionTimer ft) {
+            logEntry.put("type", "functionTimer");
+            logEntry.put("count", ft.count());
+            logEntry.put("totalTimeMs", ft.totalTime(TimeUnit.MILLISECONDS));
+            logEntry.put("meanMs", ft.mean(TimeUnit.MILLISECONDS));
+        } else {
+            logEntry.put("type", meter.getId().getType().name());
+        }
+
+        return logEntry;
+    }
+
+    void logMetricsOnShutdown(String... filters) {
+        if ("prometheus".equalsIgnoreCase(logMetricsOnShutdownFormat)) {
+            List<Meter> meters = meterRegistry.getMeters().stream()
+                    .filter(m -> AbstractMicrometerService.matchesFilter(
+                            m.getId().getName(), filters))
+                    .sorted(Comparator.comparing(AbstractMicrometerService::normalizePrometheusName))
+                    .toList();
+
+            String previousPromName = null;
+
+            for (Meter meter : meters) {
+                String promName = normalizePrometheusName(meter);
+
+                List<String> lines = convertMeterToPrometheusLines(promName, meter);
+                boolean newMetric = !promName.equals(previousPromName);
+
+                for (String line : lines) {
+                    if (!newMetric
+                            && (line.startsWith("# HELP ")
+                                    || line.startsWith("# TYPE "))) {
+                        continue;
+                    }
+
+                    LOG.info("#METRIC-START#{}#METRIC-END#", line);
+                }
+
+                previousPromName = promName;
+            }
+
+        } else {
+            meterRegistry.getMeters().stream()
+                    .filter(m -> AbstractMicrometerService.matchesFilter(m.getId().getName(), filters))
+                    .map(AbstractMicrometerService::convertMeterToMap)
+                    .forEach(this::logMetricsAsJson);
+        }
+    }
+
+    private void logMetricsAsJson(Map<String, Object> logEntry) {
+        try {
+            // we include a start and end tag to make sure the
+            // scraper can more easily identify the metric content.
+            String metric = "#METRIC-START#" + mapper.writeValueAsString(logEntry) + "#METRIC-END#";
+            LOG.info(metric);
+        } catch (Exception e) {
+            LOG.error("Error logging metric {}", logEntry.get("name"), e);
+        }
+    }
+
+    /**
+     * Converts a single {@link Meter} into one or more Prometheus text-exposition lines.
+     * <p>
+     * The output follows the Prometheus text format specification:
+     *
+     * <pre>
+     * # HELP &lt;name&gt; &lt;description&gt;
+     * # TYPE &lt;name&gt; &lt;type&gt;
+     * &lt;name&gt;{labels} &lt;value&gt;
+     * </pre>
+     *
+     * Metric names use underscores in place of dots/hyphens as required by Prometheus naming rules.
+     */
+    static List<String> convertMeterToPrometheusLines(String promName, Meter meter) {
+        String description = meter.getId().getDescription() != null ? meter.getId().getDescription() : promName;
+        String labels = buildPrometheusLabels(meter.getId().getTags());
+
+        List<String> lines = new ArrayList<>();
+
+        if (meter instanceof Gauge g) {
+            lines.add("# HELP " + promName + " " + description);
+            lines.add("# TYPE " + promName + " gauge");
+            lines.add(promName + labels + " " + formatPrometheusDouble(g.value()));
+        } else if (meter instanceof Counter c) {
+            lines.add("# HELP " + promName + "_total " + description);
+            lines.add("# TYPE " + promName + "_total counter");
+            lines.add(promName + "_total" + labels + " " + formatPrometheusDouble(c.count()));
+        } else if (meter instanceof Timer t) {
+            lines.add("# HELP " + promName + "_seconds " + description);
+            lines.add("# TYPE " + promName + "_seconds summary");
+            lines.add(promName + "_seconds_count" + labels + " " + t.count());
+            lines.add(promName + "_seconds_sum" + labels + " " + formatPrometheusDouble(t.totalTime(TimeUnit.SECONDS)));
+            lines.add(promName + "_seconds_max" + labels + " " + formatPrometheusDouble(t.max(TimeUnit.SECONDS)));
+        } else if (meter instanceof DistributionSummary ds) {
+            lines.add("# HELP " + promName + " " + description);
+            lines.add("# TYPE " + promName + " summary");
+            lines.add(promName + "_count" + labels + " " + ds.count());
+            lines.add(promName + "_sum" + labels + " " + formatPrometheusDouble(ds.totalAmount()));
+            lines.add(promName + "_max" + labels + " " + formatPrometheusDouble(ds.max()));
+        } else if (meter instanceof FunctionCounter fc) {
+            lines.add("# HELP " + promName + "_total " + description);
+            lines.add("# TYPE " + promName + "_total counter");
+            lines.add(promName + "_total" + labels + " " + formatPrometheusDouble(fc.count()));
+        } else if (meter instanceof FunctionTimer ft) {
+            lines.add("# HELP " + promName + "_seconds " + description);
+            lines.add("# TYPE " + promName + "_seconds summary");
+            lines.add(promName + "_seconds_count" + labels + " " + formatPrometheusDouble(ft.count()));
+            lines.add(promName + "_seconds_sum" + labels + " " + formatPrometheusDouble(ft.totalTime(TimeUnit.SECONDS)));
+        } else if (meter instanceof LongTaskTimer ltt) {
+            lines.add("# HELP " + promName + "_seconds " + description);
+            lines.add("# TYPE " + promName + "_seconds gauge");
+            lines.add(promName + "_seconds_count" + labels + " "
+                      + ltt.activeTasks());
+            lines.add(promName + "_seconds_sum" + labels + " "
+                      + formatPrometheusDouble(ltt.duration(TimeUnit.SECONDS)));
+            lines.add(promName + "_seconds_max" + labels + " "
+                      + formatPrometheusDouble(ltt.max(TimeUnit.SECONDS)));
+        } else {
+            // Generic fallback for unknown meter types
+            lines.add("# HELP " + promName + " " + description);
+            lines.add("# TYPE " + promName + " untyped");
+            lines.add(promName + labels + " 0");
+        }
+
+        return lines;
+    }
+
+    static String normalizePrometheusName(Meter meter) {
+        String rawName = meter.getId().getName();
+        String name = rawName.replace('.', '_').replace('-', '_');
+        String baseUnit = meter.getId().getBaseUnit();
+
+        if (baseUnit != null && !baseUnit.isBlank()) {
+            String unit = baseUnit
+                    .replace('.', '_')
+                    .replace('-', '_');
+
+            if (!name.endsWith("_" + unit)) {
+                name += "_" + unit;
+            }
+        }
+
+        if (meter instanceof Counter || meter instanceof FunctionCounter) {
+            name = name.replaceFirst("_total$", "");
+        }
+
+        return name;
+    }
+
+    private static String buildPrometheusLabels(Iterable<Tag> tags) {
+        StringBuilder sb = new StringBuilder();
+        for (Tag tag : tags) {
+            if (sb.length() > 0) {
+                sb.append(",");
+            }
+            sb.append(tag.getKey().replace('.', '_').replace('-', '_'));
+            sb.append("=\"");
+            sb.append(tag.getValue().replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"));
+            sb.append("\"");
+        }
+        return sb.length() == 0 ? "" : "{" + sb + "}";
+    }
+
+    private static String formatPrometheusDouble(double value) {
+        if (Double.isNaN(value)) {
+            return "NaN";
+        }
+        if (Double.isInfinite(value)) {
+            return value > 0 ? "+Inf" : "-Inf";
+        }
+        return Double.toString(value);
+    }
+
+    // This method does a best effort attempt to recover information about versioning of the runtime.
+    // It is also in charge to include the information in the meterRegistry passed in.
+    private void registerAppInfo(MeterRegistry meterRegistry) {
+        if (meterRegistry.find(APP_INFO_METER_NAME).gauge() == null) {
+            Optional<RuntimeInfo> rt = RuntimeInfo.quarkus();
+            if (!rt.isPresent()) {
+                rt = RuntimeInfo.springboot();
+            }
+            if (!rt.isPresent()) {
+                // If not other runtime is available, we assume we're on Camel main
+                rt = Optional.of(new RuntimeInfo(RuntimeInfo.MAIN, getCamelContext().getVersion()));
+            }
+            Gauge.builder(APP_INFO_METER_NAME, () -> 0.0)
+                    .tags(Tags.of(
+                            "camel.version", getCamelContext().getVersion(),
+                            "camel.context", getCamelContext().getName(),
+                            "camel.runtime.provider", rt.get().runtimeProvider,
+                            "camel.runtime.version", rt.get().runtimeVersion))
+                    .register(meterRegistry);
+        }
+    }
+
+    private static class RuntimeInfo {
+        private static String QUARKUS = "Quarkus";
+        private static String SPRING_BOOT = "Spring-Boot";
+        private static String MAIN = "Main";
+
+        String runtimeProvider;
+        String runtimeVersion;
+
+        private RuntimeInfo(String runtimeProvider, String runtimeVersion) {
+            this.runtimeProvider = runtimeProvider;
+            this.runtimeVersion = runtimeVersion;
+        }
+
+        static Optional<RuntimeInfo> quarkus() {
+            Optional<String> version = scan("io.quarkus.runtime.Application");
+            if (version.isPresent()) {
+                return Optional.of(new RuntimeInfo(QUARKUS, version.get()));
+            }
+            return Optional.empty();
+        }
+
+        static Optional<RuntimeInfo> springboot() {
+            Optional<String> version = scan("org.springframework.boot.SpringApplication");
+            if (version.isPresent()) {
+                return Optional.of(new RuntimeInfo(SPRING_BOOT, version.get()));
+            }
+            return Optional.empty();
+        }
+
+        static Optional<String> scan(String fqn) {
+            try {
+                Class<?> clazz = Class.forName(fqn);
+                Package pkg = clazz.getPackage();
+
+                if (pkg != null) {
+                    return Optional.of(pkg.getImplementationVersion());
+                }
+            } catch (ClassNotFoundException e) {
+                // NOOP
+            }
+
+            return Optional.empty();
+        }
+    }
+
+}
